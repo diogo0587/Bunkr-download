@@ -20,6 +20,32 @@ interface MediaFile {
 
 const SUPPORTED_EXTENSIONS = ['.mp4', '.webm', '.mkv', '.jpg', '.jpeg', '.png', '.gif', '.webp'];
 
+const decryptBunkrUrl = (encryptedUrl: string, timestamp: number): string => {
+  const atob = (str: string) => window.atob(str);
+  
+  const _0x555dd1 = (_0x3c475f: string) => {
+    const _0x4d77ad = atob(_0x3c475f);
+    const _0x36a886 = new Uint8Array(_0x4d77ad.length);
+    for (let _0x2e440c = 0; _0x2e440c < _0x4d77ad.length; _0x2e440c++) {
+      _0x36a886[_0x2e440c] = _0x4d77ad.charCodeAt(_0x2e440c);
+    }
+    return _0x36a886;
+  };
+
+  const _0x3c5a5b = (_0x1497e5: Uint8Array, _0x2adf11: string) => {
+    const _0x5bbd19 = new TextEncoder().encode(_0x2adf11);
+    const _0x311ecf = new Uint8Array(_0x1497e5.length);
+    for (let _0x5ed4f4 = 0; _0x5ed4f4 < _0x1497e5.length; _0x5ed4f4++) {
+      _0x311ecf[_0x5ed4f4] = _0x1497e5[_0x5ed4f4] ^ _0x5bbd19[_0x5ed4f4 % _0x5bbd19.length];
+    }
+    return new TextDecoder().decode(_0x311ecf);
+  };
+
+  const key = 'SECRET_KEY_' + Math.floor(timestamp / 3600);
+  const decoded = _0x555dd1(encryptedUrl);
+  return _0x3c5a5b(decoded, key);
+};
+
 export default function App() {
   const [url, setUrl] = useState('');
   const [status, setStatus] = useState('');
@@ -195,6 +221,38 @@ export default function App() {
           for (let i = 0; i < pageLinks.length; i += batchSize) {
             const batch = pageLinks.slice(i, i + batchSize);
             const promises = batch.map(async (pageUrl) => {
+              try {
+                const urlObj = new URL(pageUrl);
+                const match = urlObj.pathname.match(/^\/v\/([a-zA-Z0-9_-]+)/);
+                if (match) {
+                  const slug = match[1];
+                  const res = await fetch('/api/bunkr', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ slug })
+                  });
+                  if (res.ok) {
+                    const data = await res.json();
+                    if (data.url && data.timestamp) {
+                      const videoUrl = decryptBunkrUrl(data.url, data.timestamp);
+                      const name = videoUrl.split('/').pop() || `video-${slug}.mp4`;
+                      return {
+                        id: Math.random().toString(36).substring(7),
+                        url: videoUrl,
+                        name: decodeURIComponent(name),
+                        type: 'video' as const,
+                        extension: '.mp4',
+                        status: 'idle' as const,
+                        progress: 0
+                      };
+                    }
+                  }
+                }
+              } catch (e) {
+                console.warn('Failed to fetch from proxy', e);
+              }
+
+              // Fallback to old method
               const pageHtml = await fetchWithProxies(pageUrl);
               if (pageHtml) {
                 const pageFiles = extractLinks(pageHtml, pageUrl);

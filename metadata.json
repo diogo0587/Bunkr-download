@@ -1,0 +1,5 @@
+{
+  "name": "Bunkr Smart Album Downloader",
+  "description": "A smart client-side web application to extract and download media files from album links.",
+  "requestFramePermissions": []
+}

@@ -28,6 +28,7 @@ export default function App() {
   const [error, setError] = useState('');
   const [globalProgress, setGlobalProgress] = useState(0);
   const [isProcessingBatch, setIsProcessingBatch] = useState(false);
+  const [filterType, setFilterType] = useState<'all' | 'video' | 'image'>('all');
 
   // Parse HTML and extract links
   const extractLinks = (html: string, baseUrl: string): MediaFile[] => {
@@ -249,13 +250,14 @@ export default function App() {
   };
 
   const handleDownloadAll = async () => {
-    if (files.length === 0 || isProcessingBatch) return;
+    const filesToDownload = files.filter(file => filterType === 'all' || file.type === filterType);
+    if (filesToDownload.length === 0 || isProcessingBatch) return;
     
     setIsProcessingBatch(true);
     setStatus('Baixando arquivos...');
     
     let completed = 0;
-    for (const file of files) {
+    for (const file of filesToDownload) {
       if (file.status !== 'success') {
         const blob = await downloadFile(file);
         if (blob) {
@@ -270,7 +272,7 @@ export default function App() {
         }
       }
       completed++;
-      setGlobalProgress(Math.round((completed / files.length) * 100));
+      setGlobalProgress(Math.round((completed / filesToDownload.length) * 100));
     }
     
     setStatus('Download concluído');
@@ -279,7 +281,8 @@ export default function App() {
   };
 
   const handleGenerateZip = async () => {
-    if (files.length === 0 || isProcessingBatch) return;
+    const filesToZip = files.filter(file => filterType === 'all' || file.type === filterType);
+    if (filesToZip.length === 0 || isProcessingBatch) return;
     
     setIsProcessingBatch(true);
     setStatus('Gerando ZIP...');
@@ -288,14 +291,14 @@ export default function App() {
     const zip = new JSZip();
     let completed = 0;
 
-    for (const file of files) {
+    for (const file of filesToZip) {
       setStatus(`Baixando ${file.name} para o ZIP...`);
       const blob = await downloadFile(file);
       if (blob) {
         zip.file(file.name, blob);
       }
       completed++;
-      setGlobalProgress(Math.round((completed / files.length) * 50)); // First 50% is downloading
+      setGlobalProgress(Math.round((completed / filesToZip.length) * 50)); // First 50% is downloading
     }
 
     setStatus('Compactando arquivos...');
@@ -342,6 +345,8 @@ export default function App() {
     setUrl('');
     setGlobalProgress(0);
   };
+
+  const filteredFiles = files.filter(file => filterType === 'all' || file.type === filterType);
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-200 font-sans selection:bg-blue-500/30 pb-20">
@@ -436,26 +441,51 @@ export default function App() {
 
         {/* Actions Bar */}
         {files.length > 0 && (
-          <div className="flex flex-wrap gap-3 mb-6 items-center justify-between bg-slate-900 p-4 rounded-2xl border border-slate-800 sticky top-[88px] z-10 backdrop-blur-md bg-slate-900/80">
-            <div className="text-slate-300 font-medium">
-              <span className="text-blue-400 font-bold text-lg">{files.length}</span> arquivos
+          <div className="flex flex-col gap-4 mb-6 bg-slate-900 p-4 rounded-2xl border border-slate-800 sticky top-[88px] z-10 backdrop-blur-md bg-slate-900/80">
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <div className="text-slate-300 font-medium">
+                <span className="text-blue-400 font-bold text-lg">{filteredFiles.length}</span> arquivos
+              </div>
+              
+              {/* Filter Controls */}
+              <div className="flex bg-slate-950 rounded-lg p-1 border border-slate-800">
+                <button
+                  onClick={() => setFilterType('all')}
+                  className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${filterType === 'all' ? 'bg-slate-800 text-white' : 'text-slate-400 hover:text-slate-200'}`}
+                >
+                  Todos
+                </button>
+                <button
+                  onClick={() => setFilterType('video')}
+                  className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors flex items-center gap-1.5 ${filterType === 'video' ? 'bg-slate-800 text-white' : 'text-slate-400 hover:text-slate-200'}`}
+                >
+                  <FileVideo className="w-4 h-4" /> Vídeos
+                </button>
+                <button
+                  onClick={() => setFilterType('image')}
+                  className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors flex items-center gap-1.5 ${filterType === 'image' ? 'bg-slate-800 text-white' : 'text-slate-400 hover:text-slate-200'}`}
+                >
+                  <FileImage className="w-4 h-4" /> Imagens
+                </button>
+              </div>
             </div>
-            <div className="flex flex-wrap gap-2 w-full sm:w-auto">
+
+            <div className="flex flex-wrap gap-2 w-full">
               <button
                 onClick={handleDownloadAll}
-                disabled={isProcessingBatch}
+                disabled={isProcessingBatch || filteredFiles.length === 0}
                 className="flex-1 sm:flex-none px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-500 text-white rounded-lg font-medium transition-all flex items-center justify-center gap-2"
               >
                 <Download className="w-4 h-4" />
-                Baixar Todos
+                Baixar Visíveis
               </button>
               <button
                 onClick={handleGenerateZip}
-                disabled={isProcessingBatch}
+                disabled={isProcessingBatch || filteredFiles.length === 0}
                 className="flex-1 sm:flex-none px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-800 disabled:text-slate-500 text-white rounded-lg font-medium transition-all flex items-center justify-center gap-2"
               >
                 <Archive className="w-4 h-4" />
-                Gerar ZIP
+                ZIP Visíveis
               </button>
               <button
                 onClick={clearList}
@@ -470,9 +500,9 @@ export default function App() {
         )}
 
         {/* Files Grid */}
-        {files.length > 0 && (
+        {filteredFiles.length > 0 ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {files.map((file) => (
+            {filteredFiles.map((file) => (
               <div 
                 key={file.id} 
                 className="bg-slate-900 rounded-2xl overflow-hidden border border-slate-800 hover:border-slate-700 transition-all group flex flex-col"
@@ -563,7 +593,11 @@ export default function App() {
               </div>
             ))}
           </div>
-        )}
+        ) : files.length > 0 ? (
+          <div className="text-center py-12 bg-slate-900/50 rounded-2xl border border-slate-800 border-dashed">
+            <p className="text-slate-400">Nenhum arquivo encontrado para este filtro.</p>
+          </div>
+        ) : null}
       </main>
     </div>
   );

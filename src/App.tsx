@@ -57,6 +57,19 @@ export default function App() {
   const [filterType, setFilterType] = useState<'all' | 'video' | 'image'>('all');
 
   const fetchWithProxies = async (targetUrl: string): Promise<string | null> => {
+    try {
+      const res = await fetch('/api/fetch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: targetUrl })
+      });
+      if (res.ok) {
+        return await res.text();
+      }
+    } catch (e) {
+      console.warn('Backend proxy failed, falling back to public proxies...', e);
+    }
+
     const proxies = [
       `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`,
       `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`,
@@ -206,12 +219,42 @@ export default function App() {
       
       setStatus('Analisando página...');
       
-      let extractedFiles = extractLinks(htmlContent, url);
-      const hasVideos = extractedFiles.some(f => f.type === 'video');
+      let extractedFiles: MediaFile[] = [];
+      const urlObj = new URL(url);
       
-      // If no videos found, try deep crawling Bunkr page links
-      if (!hasVideos) {
+      // Check if it's a single video page
+      const videoMatch = urlObj.pathname.match(/^\/v\/([a-zA-Z0-9_-]+)/);
+      if (videoMatch) {
+        const slug = videoMatch[1];
+        try {
+          const res = await fetch('/api/bunkr', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ slug })
+          });
+          if (res.ok) {
+            const data = await res.json();
+            if (data.url && data.timestamp) {
+              const videoUrl = decryptBunkrUrl(data.url, data.timestamp);
+              const name = videoUrl.split('/').pop() || `video-${slug}.mp4`;
+              extractedFiles.push({
+                id: Math.random().toString(36).substring(7),
+                url: videoUrl,
+                name: decodeURIComponent(name),
+                type: 'video',
+                extension: '.mp4',
+                status: 'idle',
+                progress: 0
+              });
+            }
+          }
+        } catch (e) {
+          console.warn('Failed to fetch single video', e);
+        }
+      } else {
+        // It's likely an album page or other page
         const pageLinks = extractBunkrPageLinks(htmlContent, url);
+        
         if (pageLinks.length > 0) {
           setStatus(`Encontrados ${pageLinks.length} links. Extraindo mídias (isso pode levar um momento)...`);
           
@@ -222,8 +265,8 @@ export default function App() {
             const batch = pageLinks.slice(i, i + batchSize);
             const promises = batch.map(async (pageUrl) => {
               try {
-                const urlObj = new URL(pageUrl);
-                const match = urlObj.pathname.match(/^\/v\/([a-zA-Z0-9_-]+)/);
+                const pageUrlObj = new URL(pageUrl);
+                const match = pageUrlObj.pathname.match(/^\/v\/([a-zA-Z0-9_-]+)/);
                 if (match) {
                   const slug = match[1];
                   const res = await fetch('/api/bunkr', {
@@ -247,17 +290,27 @@ export default function App() {
                       };
                     }
                   }
+                } else if (pageUrlObj.pathname.match(/^\/i\/([a-zA-Z0-9_-]+)/)) {
+                  // It's an image page, we need to fetch it to get the real image URL
+                  const pageHtml = await fetchWithProxies(pageUrl);
+                  if (pageHtml) {
+                    const pageFiles = extractLinks(pageHtml, pageUrl);
+                    // Filter out thumbs, we want the full image
+                    const fullImages = pageFiles.filter(f => f.type === 'image' && !f.url.includes('/thumbs/'));
+                    return fullImages[0] || pageFiles[0];
+                  }
                 }
               } catch (e) {
                 console.warn('Failed to fetch from proxy', e);
               }
 
-              // Fallback to old method
+              // Fallback to old method if not a recognized Bunkr page
               const pageHtml = await fetchWithProxies(pageUrl);
               if (pageHtml) {
                 const pageFiles = extractLinks(pageHtml, pageUrl);
-                // Prefer video over image
-                return pageFiles.find(f => f.type === 'video') || pageFiles.find(f => f.type === 'image');
+                // Prefer video over image, and filter out thumbs
+                const validFiles = pageFiles.filter(f => !f.url.includes('/thumbs/'));
+                return validFiles.find(f => f.type === 'video') || validFiles.find(f => f.type === 'image');
               }
               return null;
             });
@@ -274,6 +327,11 @@ export default function App() {
             setStatus(`Analisando mídias... ${processed}/${pageLinks.length}`);
           }
           setGlobalProgress(0);
+        } else {
+          // Fallback to basic extraction if no Bunkr page links found
+          extractedFiles = extractLinks(htmlContent, url);
+          // Filter out thumbnails
+          extractedFiles = extractedFiles.filter(f => !f.url.includes('/thumbs/'));
         }
       }
       
@@ -301,22 +359,18 @@ export default function App() {
     }
   };
 
-  const downloadFile = async (file: MediaFile): Promise<Blob | null> => {
+  const downloadFile = async (file: MediaFile): Promise<boolean> => {
     try {
       setFiles(prev => prev.map(f => f.id === file.id ? { ...f, status: 'downloading', progress: 0 } : f));
       
-      // Use proxy for download to avoid CORS if needed, but direct might work for some CDNs
-      // Bunkr usually requires direct download or it might block proxies. We'll try direct first.
-      // If direct fails due to CORS, we fallback to proxy.
       let response;
       try {
-        response = await fetch(file.url);
+        response = await fetch(`/api/download?url=${encodeURIComponent(file.url)}`);
+        if (!response.ok) throw new Error('Backend proxy failed');
       } catch (e) {
-        // Fallback to proxy
-        response = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(file.url)}`);
+        console.warn('Backend download failed, falling back to new tab.', e);
+        throw new Error('PROXY_FAILED');
       }
-
-      if (!response.ok) throw new Error('Download failed');
 
       const contentLength = response.headers.get('content-length');
       const total = contentLength ? parseInt(contentLength, 10) : 0;
@@ -342,18 +396,6 @@ export default function App() {
       }
 
       const blob = new Blob(chunks);
-      setFiles(prev => prev.map(f => f.id === file.id ? { ...f, status: 'success', progress: 100 } : f));
-      return blob;
-    } catch (err) {
-      console.error(err);
-      setFiles(prev => prev.map(f => f.id === file.id ? { ...f, status: 'error', progress: 0 } : f));
-      return null;
-    }
-  };
-
-  const handleDownloadSingle = async (file: MediaFile) => {
-    const blob = await downloadFile(file);
-    if (blob) {
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -362,7 +404,32 @@ export default function App() {
       a.click();
       window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
+
+      setFiles(prev => prev.map(f => f.id === file.id ? { ...f, status: 'success', progress: 100 } : f));
+      return true;
+    } catch (err: any) {
+      // If proxy failed, fallback to opening in a new tab
+      if (err.message === 'PROXY_FAILED' || err.name === 'TypeError') {
+        setToast('Download direto bloqueado. Abrindo em nova aba...');
+        const a = document.createElement('a');
+        a.href = file.url;
+        a.download = file.name;
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setFiles(prev => prev.map(f => f.id === file.id ? { ...f, status: 'success', progress: 100 } : f));
+        return true;
+      }
+
+      setFiles(prev => prev.map(f => f.id === file.id ? { ...f, status: 'error', progress: 0 } : f));
+      return false;
     }
+  };
+
+  const handleDownloadSingle = async (file: MediaFile) => {
+    await downloadFile(file);
   };
 
   const handleDownloadAll = async () => {
@@ -375,17 +442,9 @@ export default function App() {
     let completed = 0;
     for (const file of filesToDownload) {
       if (file.status !== 'success') {
-        const blob = await downloadFile(file);
-        if (blob) {
-          const url = window.URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = file.name;
-          document.body.appendChild(a);
-          a.click();
-          window.URL.revokeObjectURL(url);
-          document.body.removeChild(a);
-        }
+        await downloadFile(file);
+        // Add a small delay between downloads to prevent browser blocking multiple popups
+        await new Promise(resolve => setTimeout(resolve, 1000));
       }
       completed++;
       setGlobalProgress(Math.round((completed / filesToDownload.length) * 100));
@@ -409,10 +468,20 @@ export default function App() {
 
     for (const file of filesToZip) {
       setStatus(`Baixando ${file.name} para o ZIP...`);
-      const blob = await downloadFile(file);
-      if (blob) {
+      
+      // For ZIP, we MUST fetch the blob. We can't use the fallback.
+      try {
+        let response;
+        response = await fetch(`/api/download?url=${encodeURIComponent(file.url)}`);
+        if (!response.ok) throw new Error('Backend proxy failed');
+
+        const blob = await response.blob();
         zip.file(file.name, blob);
+      } catch (err) {
+        console.warn(`Failed to add ${file.name} to ZIP`, err);
+        setToast(`Falha ao adicionar ${file.name} ao ZIP (CORS)`);
       }
+
       completed++;
       setGlobalProgress(Math.round((completed / filesToZip.length) * 50)); // First 50% is downloading
     }

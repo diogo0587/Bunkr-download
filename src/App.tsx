@@ -30,43 +30,96 @@ export default function App() {
   const [isProcessingBatch, setIsProcessingBatch] = useState(false);
   const [filterType, setFilterType] = useState<'all' | 'video' | 'image'>('all');
 
-  // Parse HTML and extract links
-  const extractLinks = (html: string, baseUrl: string): MediaFile[] => {
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(html, 'text/html');
-    const links = Array.from(doc.querySelectorAll('a'));
-    
-    const extractedFiles: Map<string, MediaFile> = new Map();
+  const fetchWithProxies = async (targetUrl: string): Promise<string | null> => {
+    const proxies = [
+      `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`,
+      `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`,
+      `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetUrl)}`
+    ];
 
-    links.forEach(link => {
-      let href = link.getAttribute('href');
-      if (!href) return;
-
-      // Handle relative URLs
+    for (const proxyUrl of proxies) {
       try {
-        if (href.startsWith('/')) {
-          const urlObj = new URL(baseUrl);
-          href = `${urlObj.origin}${href}`;
-        } else if (!href.startsWith('http')) {
-          return; // Skip invalid or complex relative links for now
+        const response = await fetch(proxyUrl);
+        if (response.ok) {
+          if (proxyUrl.includes('allorigins')) {
+            const data = await response.json();
+            return data.contents;
+          } else {
+            return await response.text();
+          }
         }
       } catch (e) {
-        return;
+        console.warn(`Proxy ${proxyUrl} failed, trying next...`);
       }
+    }
+    return null;
+  };
 
-      const urlObj = new URL(href);
-      const pathname = urlObj.pathname.toLowerCase();
+  const extractLinks = (html: string, baseUrl: string): MediaFile[] => {
+    const extractedFiles: Map<string, MediaFile> = new Map();
+    
+    // Unescape JSON slashes (e.g., https:\/\/cdn... -> https://cdn...)
+    const cleanHtml = html.replace(/\\\//g, '/');
+    
+    // Aggressive Regex to find any media URL
+    const urlRegex = /https?:\/\/[^\s"'<>]+?\.(?:mp4|webm|mkv|jpg|jpeg|png|gif|webp)(?:\?[^\s"'<>]*)?/gi;
+    const matches = cleanHtml.match(urlRegex) || [];
+    
+    matches.forEach(url => {
+      try {
+        const urlObj = new URL(url);
+        const pathname = urlObj.pathname.toLowerCase();
+        const ext = SUPPORTED_EXTENSIONS.find(e => pathname.endsWith(e));
+        if (ext) {
+          const type = ['.mp4', '.webm', '.mkv'].includes(ext) ? 'video' : 'image';
+          const name = pathname.split('/').pop() || `file${ext}`;
+          
+          // Ignore common UI images
+          if (type === 'image' && (pathname.includes('avatar') || pathname.includes('icon') || pathname.includes('logo') || pathname.includes('favicon'))) {
+            return;
+          }
+
+          if (!extractedFiles.has(url)) {
+            extractedFiles.set(url, {
+              id: Math.random().toString(36).substring(7),
+              url: url,
+              name: decodeURIComponent(name),
+              type,
+              extension: ext,
+              status: 'idle',
+              progress: 0
+            });
+          }
+        }
+      } catch(e) {}
+    });
+
+    // DOM Parsing fallback
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, 'text/html');
+    const mediaTags = Array.from(doc.querySelectorAll('video source, img, a'));
+    
+    mediaTags.forEach(tag => {
+      let src = tag.getAttribute('src') || tag.getAttribute('href');
+      if (!src) return;
       
-      const ext = SUPPORTED_EXTENSIONS.find(e => pathname.endsWith(e));
-      if (ext) {
-        const name = pathname.split('/').pop() || `file${ext}`;
-        const type = ['.mp4', '.webm', '.mkv'].includes(ext) ? 'video' : 'image';
+      try {
+        const absoluteUrl = new URL(src, baseUrl).href;
+        const urlObj = new URL(absoluteUrl);
+        const pathname = urlObj.pathname.toLowerCase();
         
-        // Use URL as ID to prevent duplicates
-        if (!extractedFiles.has(href)) {
-          extractedFiles.set(href, {
+        const ext = SUPPORTED_EXTENSIONS.find(e => pathname.endsWith(e));
+        if (ext && !extractedFiles.has(absoluteUrl)) {
+          const type = ['.mp4', '.webm', '.mkv'].includes(ext) ? 'video' : 'image';
+          const name = pathname.split('/').pop() || `file${ext}`;
+          
+          if (type === 'image' && (pathname.includes('avatar') || pathname.includes('icon') || pathname.includes('logo') || pathname.includes('favicon'))) {
+            return;
+          }
+
+          extractedFiles.set(absoluteUrl, {
             id: Math.random().toString(36).substring(7),
-            url: href,
+            url: absoluteUrl,
             name: decodeURIComponent(name),
             type,
             extension: ext,
@@ -74,47 +127,31 @@ export default function App() {
             progress: 0
           });
         }
-      }
-    });
-
-    // Also look for src attributes in video/img tags as fallback
-    const mediaTags = Array.from(doc.querySelectorAll('video source, img'));
-    mediaTags.forEach(tag => {
-      let src = tag.getAttribute('src');
-      if (!src) return;
-      
-      try {
-        if (src.startsWith('/')) {
-          const urlObj = new URL(baseUrl);
-          src = `${urlObj.origin}${src}`;
-        } else if (!src.startsWith('http')) {
-          return;
-        }
-      } catch (e) {
-        return;
-      }
-
-      const urlObj = new URL(src);
-      const pathname = urlObj.pathname.toLowerCase();
-      
-      const ext = SUPPORTED_EXTENSIONS.find(e => pathname.endsWith(e));
-      if (ext && !extractedFiles.has(src)) {
-        const name = pathname.split('/').pop() || `file${ext}`;
-        const type = ['.mp4', '.webm', '.mkv'].includes(ext) ? 'video' : 'image';
-        
-        extractedFiles.set(src, {
-          id: Math.random().toString(36).substring(7),
-          url: src,
-          name: decodeURIComponent(name),
-          type,
-          extension: ext,
-          status: 'idle',
-          progress: 0
-        });
-      }
+      } catch (e) {}
     });
 
     return Array.from(extractedFiles.values());
+  };
+
+  const extractBunkrPageLinks = (html: string, baseUrl: string): string[] => {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, 'text/html');
+    const links = Array.from(doc.querySelectorAll('a'));
+    const pageUrls = new Set<string>();
+    
+    links.forEach(link => {
+      let href = link.getAttribute('href');
+      if (!href) return;
+      try {
+        const absoluteUrl = new URL(href, baseUrl).href;
+        const urlObj = new URL(absoluteUrl);
+        // Match Bunkr specific paths: /v/ (video), /i/ (image), /d/ (download)
+        if (urlObj.pathname.match(/^\/[vid]\/[a-zA-Z0-9_-]+/)) {
+          pageUrls.add(absoluteUrl);
+        }
+      } catch (e) {}
+    });
+    return Array.from(pageUrls);
   };
 
   const handleSearch = async (e: React.FormEvent) => {
@@ -135,47 +172,68 @@ export default function App() {
     setStatus('Buscando arquivos...');
 
     try {
-      // Try multiple proxies if one fails
-      const proxies = [
-        `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`,
-        `https://corsproxy.io/?${encodeURIComponent(url)}`,
-        `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`
-      ];
-
-      let htmlContent = '';
-      let success = false;
-
-      for (const proxyUrl of proxies) {
-        try {
-          const response = await fetch(proxyUrl);
-          if (response.ok) {
-            if (proxyUrl.includes('allorigins')) {
-              const data = await response.json();
-              htmlContent = data.contents;
-            } else {
-              htmlContent = await response.text();
-            }
-            success = true;
-            break;
-          }
-        } catch (e) {
-          console.warn(`Proxy ${proxyUrl} failed, trying next...`);
-        }
-      }
-
-      if (!success) {
+      const htmlContent = await fetchWithProxies(url);
+      
+      if (!htmlContent) {
         throw new Error('Falha ao acessar a página através dos proxies.');
       }
       
       setStatus('Analisando página...');
       
-      const extractedFiles = extractLinks(htmlContent, url);
+      let extractedFiles = extractLinks(htmlContent, url);
+      const hasVideos = extractedFiles.some(f => f.type === 'video');
+      
+      // If no videos found, try deep crawling Bunkr page links
+      if (!hasVideos) {
+        const pageLinks = extractBunkrPageLinks(htmlContent, url);
+        if (pageLinks.length > 0) {
+          setStatus(`Encontrados ${pageLinks.length} links. Extraindo mídias (isso pode levar um momento)...`);
+          
+          let processed = 0;
+          const batchSize = 3; // Process 3 at a time to avoid overwhelming proxies
+          
+          for (let i = 0; i < pageLinks.length; i += batchSize) {
+            const batch = pageLinks.slice(i, i + batchSize);
+            const promises = batch.map(async (pageUrl) => {
+              const pageHtml = await fetchWithProxies(pageUrl);
+              if (pageHtml) {
+                const pageFiles = extractLinks(pageHtml, pageUrl);
+                // Prefer video over image
+                return pageFiles.find(f => f.type === 'video') || pageFiles.find(f => f.type === 'image');
+              }
+              return null;
+            });
+            
+            const results = await Promise.all(promises);
+            results.forEach(res => {
+              if (res && !extractedFiles.some(f => f.url === res.url)) {
+                extractedFiles.push(res);
+              }
+            });
+            
+            processed += batch.length;
+            setGlobalProgress(Math.round((processed / pageLinks.length) * 100));
+            setStatus(`Analisando mídias... ${processed}/${pageLinks.length}`);
+          }
+          setGlobalProgress(0);
+        }
+      }
       
       if (extractedFiles.length === 0) {
         setStatus('Nenhum arquivo detectado');
       } else {
-        setFiles(extractedFiles);
-        setStatus(`${extractedFiles.length} arquivos encontrados`);
+        // Remove thumbnails if we have the actual video with the same name
+        // Bunkr often has video.mp4 and video.mp4.jpg
+        const finalFiles = extractedFiles.filter(file => {
+          if (file.type === 'image') {
+            const videoExists = extractedFiles.some(v => v.type === 'video' && (v.name.includes(file.name.replace(/\.[^/.]+$/, "")) || file.name.includes(v.name.replace(/\.[^/.]+$/, ""))));
+            if (videoExists) return false; // Skip this image as it's likely a thumbnail for the video
+          }
+          return true;
+        });
+
+        setFiles(finalFiles);
+        setStatus(`${finalFiles.length} arquivos encontrados`);
       }
     } catch (err) {
       setError('Erro ao buscar a página. Verifique o link ou tente novamente mais tarde.');

@@ -214,7 +214,7 @@ export default function App() {
       const htmlContent = await fetchWithProxies(url);
       
       if (!htmlContent) {
-        throw new Error('Falha ao acessar a página através dos proxies.');
+        throw new Error('Falha ao acessar a página. O site pode estar bloqueando o acesso ou estar temporariamente indisponível.');
       }
       
       setStatus('Analisando página...');
@@ -247,6 +247,8 @@ export default function App() {
                 progress: 0
               });
             }
+          } else {
+             console.warn('Backend returned error for single video');
           }
         } catch (e) {
           console.warn('Failed to fetch single video', e);
@@ -301,16 +303,20 @@ export default function App() {
                   }
                 }
               } catch (e) {
-                console.warn('Failed to fetch from proxy', e);
+                console.warn(`Failed to process link ${pageUrl}`, e);
               }
 
               // Fallback to old method if not a recognized Bunkr page
-              const pageHtml = await fetchWithProxies(pageUrl);
-              if (pageHtml) {
-                const pageFiles = extractLinks(pageHtml, pageUrl);
-                // Prefer video over image, and filter out thumbs
-                const validFiles = pageFiles.filter(f => !f.url.includes('/thumbs/'));
-                return validFiles.find(f => f.type === 'video') || validFiles.find(f => f.type === 'image');
+              try {
+                const pageHtml = await fetchWithProxies(pageUrl);
+                if (pageHtml) {
+                  const pageFiles = extractLinks(pageHtml, pageUrl);
+                  // Prefer video over image, and filter out thumbs
+                  const validFiles = pageFiles.filter(f => !f.url.includes('/thumbs/'));
+                  return validFiles.find(f => f.type === 'video') || validFiles.find(f => f.type === 'image');
+                }
+              } catch (e) {
+                 console.warn(`Fallback extraction failed for ${pageUrl}`, e);
               }
               return null;
             });
@@ -336,7 +342,8 @@ export default function App() {
       }
       
       if (extractedFiles.length === 0) {
-        setStatus('Nenhum arquivo detectado');
+        setError('Nenhum arquivo de mídia encontrado. Verifique se o link é válido e se o álbum não está vazio.');
+        setStatus('');
       } else {
         // Remove thumbnails if we have the actual video with the same name
         // Bunkr often has video.mp4 and video.mp4.jpg
@@ -349,10 +356,15 @@ export default function App() {
         });
 
         setFiles(finalFiles);
-        setStatus(`${finalFiles.length} arquivos encontrados`);
+        setStatus(`${finalFiles.length} arquivos encontrados com sucesso.`);
       }
-    } catch (err) {
-      setError('Erro ao buscar a página. Verifique o link ou tente novamente mais tarde.');
+    } catch (err: any) {
+      console.error('Search error:', err);
+      if (err.message && err.message.includes('Falha ao acessar')) {
+        setError(err.message);
+      } else {
+        setError('Ocorreu um erro inesperado ao buscar a página. Por favor, verifique sua conexão e tente novamente.');
+      }
       setStatus('');
     } finally {
       setIsLoading(false);
@@ -410,7 +422,7 @@ export default function App() {
     } catch (err: any) {
       // If proxy failed, fallback to opening in a new tab
       if (err.message === 'PROXY_FAILED' || err.name === 'TypeError') {
-        setToast('Download direto bloqueado. Abrindo em nova aba...');
+        setToast(`Download direto de ${file.name} bloqueado. Abrindo em nova aba...`);
         const a = document.createElement('a');
         a.href = file.url;
         a.download = file.name;
@@ -423,6 +435,7 @@ export default function App() {
         return true;
       }
 
+      setToast(`Erro ao baixar ${file.name}. Tente novamente.`);
       setFiles(prev => prev.map(f => f.id === file.id ? { ...f, status: 'error', progress: 0 } : f));
       return false;
     }
@@ -437,20 +450,20 @@ export default function App() {
     if (filesToDownload.length === 0 || isProcessingBatch) return;
     
     setIsProcessingBatch(true);
-    setStatus('Baixando arquivos...');
+    setStatus('Iniciando download em lote...');
     
     let completed = 0;
     for (const file of filesToDownload) {
       if (file.status !== 'success') {
         await downloadFile(file);
         // Add a small delay between downloads to prevent browser blocking multiple popups
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        await new Promise(resolve => setTimeout(resolve, 1500));
       }
       completed++;
       setGlobalProgress(Math.round((completed / filesToDownload.length) * 100));
     }
     
-    setStatus('Download concluído');
+    setStatus('Download em lote concluído!');
     setIsProcessingBatch(false);
     setTimeout(() => setGlobalProgress(0), 3000);
   };
@@ -460,7 +473,7 @@ export default function App() {
     if (filesToZip.length === 0 || isProcessingBatch) return;
     
     setIsProcessingBatch(true);
-    setStatus('Gerando ZIP...');
+    setStatus('Preparando para gerar arquivo ZIP...');
     setGlobalProgress(0);
     
     const zip = new JSZip();
@@ -473,20 +486,20 @@ export default function App() {
       try {
         let response;
         response = await fetch(`/api/download?url=${encodeURIComponent(file.url)}`);
-        if (!response.ok) throw new Error('Backend proxy failed');
+        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
 
         const blob = await response.blob();
         zip.file(file.name, blob);
       } catch (err) {
         console.warn(`Failed to add ${file.name} to ZIP`, err);
-        setToast(`Falha ao adicionar ${file.name} ao ZIP (CORS)`);
+        setToast(`Aviso: Não foi possível incluir ${file.name} no ZIP devido a restrições de acesso.`);
       }
 
       completed++;
       setGlobalProgress(Math.round((completed / filesToZip.length) * 50)); // First 50% is downloading
     }
 
-    setStatus('Compactando arquivos...');
+    setStatus('Compactando arquivos... Isso pode levar alguns minutos dependendo do tamanho.');
     
     try {
       const content = await zip.generateAsync({ 
@@ -505,13 +518,14 @@ export default function App() {
       window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
       
-      setStatus('ZIP gerado com sucesso!');
+      setStatus('Arquivo ZIP gerado e download iniciado com sucesso!');
     } catch (err) {
-      setError('Erro ao gerar arquivo ZIP.');
+      console.error('Error generating ZIP:', err);
+      setError('Erro ao gerar arquivo ZIP. O arquivo pode ser muito grande para a memória do navegador.');
       setStatus('');
     } finally {
       setIsProcessingBatch(false);
-      setTimeout(() => setGlobalProgress(0), 3000);
+      setTimeout(() => setGlobalProgress(0), 4000);
     }
   };
 

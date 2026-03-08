@@ -18,3 +18,19 @@ View your app in AI Studio: https://ai.studio/apps/0cb758d1-b93a-406a-b833-88774
 2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
 3. Run the app:
    `npm run dev`
+
+## Android Build
+
+This project is configured with Capacitor to build an Android APK.
+
+### How to download the APK
+
+1.  **Via GitHub Actions (Recommended):**
+    *   Go to the **Actions** tab in your GitHub repository.
+    *   Select the latest **Android Build** workflow run.
+    *   In the **Artifacts** section at the bottom, download the `app-debug` file.
+2.  **Manual Build:**
+    *   Run `npm run build`
+    *   Run `npx cap sync android`
+    *   Run `cd android && ./gradlew assembleDebug`
+    *   The APK will be located at `android/app/build/outputs/apk/debug/app-debug.apk`.

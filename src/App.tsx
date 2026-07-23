@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { 
   Search, Download, Copy, Trash2, Archive, CheckCircle2, 
   AlertCircle, Loader2, FileVideo, FileImage, ExternalLink,
-  PlayCircle
+  PlayCircle, Zap
 } from 'lucide-react';
 import JSZip from 'jszip';
 
@@ -195,12 +195,11 @@ export default function App() {
     return Array.from(pageUrls);
   };
 
-  const handleSearch = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!url) return;
+  const processSearch = async (targetUrl: string) => {
+    if (!targetUrl) return;
 
     try {
-      new URL(url);
+      new URL(targetUrl);
     } catch {
       setError('URL inválida. Por favor, insira um link válido.');
       return;
@@ -213,7 +212,7 @@ export default function App() {
     setStatus('Buscando arquivos...');
 
     try {
-      const htmlContent = await fetchWithProxies(url);
+      const htmlContent = await fetchWithProxies(targetUrl);
       
       if (!htmlContent) {
         throw new Error('Falha ao acessar a página. O site pode estar bloqueando o acesso ou estar temporariamente indisponível.');
@@ -222,7 +221,7 @@ export default function App() {
       setStatus('Analisando página...');
       
       let extractedFiles: MediaFile[] = [];
-      const urlObj = new URL(url);
+      const urlObj = new URL(targetUrl);
       
       // Check if it's a single video page
       const videoMatch = urlObj.pathname.match(/^\/v\/([a-zA-Z0-9_-]+)/);
@@ -257,7 +256,7 @@ export default function App() {
         }
       } else {
         // It's likely an album page or other page
-        const pageLinks = extractBunkrPageLinks(htmlContent, url);
+        const pageLinks = extractBunkrPageLinks(htmlContent, targetUrl);
         
         if (pageLinks.length > 0) {
           setStatus(`Encontrados ${pageLinks.length} links. Extraindo mídias (isso pode levar um momento)...`);
@@ -337,7 +336,7 @@ export default function App() {
           setGlobalProgress(0);
         } else {
           // Fallback to basic extraction if no Bunkr page links found
-          extractedFiles = extractLinks(htmlContent, url);
+          extractedFiles = extractLinks(htmlContent, targetUrl);
           // Filter out thumbnails
           extractedFiles = extractedFiles.filter(f => !f.url.includes('/thumbs/'));
         }
@@ -369,6 +368,27 @@ export default function App() {
       setStatus('');
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleSearch = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await processSearch(url);
+  };
+
+  const handlePaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
+    const pastedText = e.clipboardData.getData('text').trim();
+    if (!pastedText) return;
+
+    try {
+      const parsed = new URL(pastedText);
+      if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+        setUrl(pastedText);
+        setToast('Link colado! Buscando arquivos automaticamente...');
+        processSearch(pastedText);
+      }
+    } catch {
+      // If not a valid URL, let normal paste proceed without auto-triggering search
     }
   };
 
@@ -596,11 +616,16 @@ export default function App() {
                 type="url"
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
+                onPaste={handlePaste}
                 placeholder="Cole o link do álbum aqui (ex: https://bunkr.ru/a/...)"
                 className="block w-full pl-11 pr-4 py-4 bg-slate-950 border border-slate-700 rounded-xl text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-base md:text-lg"
                 required
                 disabled={isLoading || isProcessingBatch}
               />
+            </div>
+            <div className="flex items-center gap-1.5 text-xs text-blue-400/90 font-medium px-1">
+              <Zap className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+              <span>Detecção automática: ao colar o link, a busca inicia sozinho!</span>
             </div>
             <button
               type="submit"

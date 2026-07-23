@@ -16,6 +16,8 @@ interface MediaFile {
   size?: number;
   status: 'idle' | 'downloading' | 'success' | 'error';
   progress: number;
+  loadedBytes?: number;
+  totalBytes?: number;
 }
 
 const SUPPORTED_EXTENSIONS = ['.mp4', '.webm', '.mkv', '.jpg', '.jpeg', '.png', '.gif', '.webp'];
@@ -67,7 +69,7 @@ export default function App() {
         return await res.text();
       }
     } catch (e) {
-      console.warn('Backend proxy failed, falling back to public proxies...', e);
+      // Backend proxy failed, falling back to public proxies
     }
 
     const proxies = [
@@ -88,7 +90,7 @@ export default function App() {
           }
         }
       } catch (e) {
-        console.warn(`Proxy ${proxyUrl} failed, trying next...`);
+        // Proxy failed, trying next
       }
     }
     return null;
@@ -248,10 +250,10 @@ export default function App() {
               });
             }
           } else {
-             console.warn('Backend returned error for single video');
+             // Backend returned error for single video
           }
         } catch (e) {
-          console.warn('Failed to fetch single video', e);
+          // Failed to fetch single video
         }
       } else {
         // It's likely an album page or other page
@@ -303,7 +305,7 @@ export default function App() {
                   }
                 }
               } catch (e) {
-                console.warn(`Failed to process link ${pageUrl}`, e);
+                // Failed to process link
               }
 
               // Fallback to old method if not a recognized Bunkr page
@@ -316,7 +318,7 @@ export default function App() {
                   return validFiles.find(f => f.type === 'video') || validFiles.find(f => f.type === 'image');
                 }
               } catch (e) {
-                 console.warn(`Fallback extraction failed for ${pageUrl}`, e);
+                 // Fallback extraction failed
               }
               return null;
             });
@@ -359,7 +361,6 @@ export default function App() {
         setStatus(`${finalFiles.length} arquivos encontrados com sucesso.`);
       }
     } catch (err: any) {
-      console.error('Search error:', err);
       if (err.message && err.message.includes('Falha ao acessar')) {
         setError(err.message);
       } else {
@@ -373,14 +374,13 @@ export default function App() {
 
   const downloadFile = async (file: MediaFile): Promise<boolean> => {
     try {
-      setFiles(prev => prev.map(f => f.id === file.id ? { ...f, status: 'downloading', progress: 0 } : f));
+      setFiles(prev => prev.map(f => f.id === file.id ? { ...f, status: 'downloading', progress: 0, loadedBytes: 0, totalBytes: 0 } : f));
       
       let response;
       try {
         response = await fetch(`/api/download?url=${encodeURIComponent(file.url)}`);
         if (!response.ok) throw new Error('Backend proxy failed');
       } catch (e) {
-        console.warn('Backend download failed, falling back to new tab.', e);
         throw new Error('PROXY_FAILED');
       }
 
@@ -392,6 +392,7 @@ export default function App() {
       const chunks: Uint8Array[] = [];
 
       if (reader) {
+        let lastUpdate = Date.now();
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
@@ -399,9 +400,12 @@ export default function App() {
           if (value) {
             chunks.push(value);
             loaded += value.length;
-            if (total) {
-              const progress = Math.round((loaded / total) * 100);
-              setFiles(prev => prev.map(f => f.id === file.id ? { ...f, progress } : f));
+            
+            const now = Date.now();
+            if (now - lastUpdate > 100 || loaded === total) {
+              lastUpdate = now;
+              const progress = total ? Math.round((loaded / total) * 100) : 0;
+              setFiles(prev => prev.map(f => f.id === file.id ? { ...f, progress, loadedBytes: loaded, totalBytes: total } : f));
             }
           }
         }
@@ -491,7 +495,6 @@ export default function App() {
         const blob = await response.blob();
         zip.file(file.name, blob);
       } catch (err) {
-        console.warn(`Failed to add ${file.name} to ZIP`, err);
         setToast(`Aviso: Não foi possível incluir ${file.name} no ZIP devido a restrições de acesso.`);
       }
 
@@ -520,7 +523,6 @@ export default function App() {
       
       setStatus('Arquivo ZIP gerado e download iniciado com sucesso!');
     } catch (err) {
-      console.error('Error generating ZIP:', err);
       setError('Erro ao gerar arquivo ZIP. O arquivo pode ser muito grande para a memória do navegador.');
       setStatus('');
     } finally {
@@ -530,6 +532,15 @@ export default function App() {
   };
 
   const [toast, setToast] = useState('');
+
+  const formatBytes = (bytes: number, decimals = 2) => {
+    if (!+bytes) return '0 Bytes';
+    const k = 1024;
+    const dm = decimals < 0 ? 0 : decimals;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
+  };
 
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
@@ -738,12 +749,26 @@ export default function App() {
                   
                   <div className="mt-auto space-y-3">
                     {/* Progress Bar for individual file */}
-                    {(file.status === 'downloading' || file.progress > 0) && (
-                      <div className="h-1.5 w-full bg-slate-800 rounded-full overflow-hidden">
-                        <div 
-                          className={`h-full transition-all duration-300 ${file.status === 'error' ? 'bg-red-500' : file.status === 'success' ? 'bg-emerald-500' : 'bg-blue-500'}`}
-                          style={{ width: `${file.progress}%` }}
-                        />
+                    {(file.status === 'downloading' || file.progress > 0 || file.status === 'success' || file.status === 'error') && (
+                      <div className="space-y-1.5">
+                        <div className="flex justify-between text-[11px] text-slate-400 font-medium">
+                          <span>
+                            {file.status === 'downloading' ? 'Baixando...' : file.status === 'success' ? 'Concluído' : file.status === 'error' ? 'Erro' : ''}
+                          </span>
+                          <span>
+                            {file.status === 'success' ? '100%' : file.status === 'error' ? '' : file.totalBytes 
+                              ? `${formatBytes(file.loadedBytes || 0)} / ${formatBytes(file.totalBytes)} (${file.progress}%)`
+                              : file.loadedBytes 
+                                ? `${formatBytes(file.loadedBytes)}`
+                                : file.progress > 0 ? `${file.progress}%` : ''}
+                          </span>
+                        </div>
+                        <div className="h-1.5 w-full bg-slate-800 rounded-full overflow-hidden">
+                          <div 
+                            className={`h-full transition-all duration-300 ${file.status === 'error' ? 'bg-red-500' : file.status === 'success' ? 'bg-emerald-500' : 'bg-blue-500'}`}
+                            style={{ width: `${file.status === 'success' ? 100 : file.status === 'error' && file.progress === 0 ? 100 : file.progress}%` }}
+                          />
+                        </div>
                       </div>
                     )}
 

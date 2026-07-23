@@ -30,7 +30,6 @@ async function startServer() {
       const text = await response.text();
       res.send(text);
     } catch (error) {
-      console.error('Error fetching URL:', error);
       res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -61,7 +60,6 @@ async function startServer() {
       const data = await response.json();
       res.json(data);
     } catch (error) {
-      console.error('Error proxying to Bunkr:', error);
       res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -102,7 +100,6 @@ async function startServer() {
         res.status(500).send('No response body');
       }
     } catch (error) {
-      console.error('Download error:', error);
       res.status(500).send('Internal server error');
     }
   });

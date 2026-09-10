@@ -2,22 +2,22 @@
 <html lang="pt-BR">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-    <meta name="theme-color" content="#0f172a" />
-    <link rel="manifest" href="./manifest.json" />
-    <title>Bunkr Smart Album Downloader</title>
-  </head>
-  <body class="bg-slate-950 text-slate-50 antialiased selection:bg-blue-500/30">
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#020617" />
+    <meta http-equiv="refresh" content="0; url=https://bunkr-download-api.onrender.com/" />
+    <title>Abrindo Bunkr DL...</title>
+    <style>
+      html,body{margin:0;min-height:100%;background:#020617;color:#e2e8f0;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+      body{display:grid;place-items:center;min-height:100vh}.box{text-align:center;padding:24px}.dot{width:36px;height:36px;border:3px solid #334155;border-top-color:#3b82f6;border-radius:50%;margin:0 auto 16px;animation:s .8s linear infinite}@keyframes s{to{transform:rotate(360deg)}}a{color:#60a5fa}
+    </style>
     <script>
-      if ('serviceWorker' in navigator) {
-        window.addEventListener('load', () => {
-          navigator.serviceWorker.register('./sw.js').catch((registrationError) => {
-            console.log('SW registration failed:', registrationError);
-          });
-        });
-      }
+      (function(){
+        var target='https://bunkr-download-api.onrender.com/'+window.location.search+window.location.hash;
+        window.location.replace(target);
+      })();
     </script>
+  </head>
+  <body>
+    <div class="box"><div class="dot"></div><strong>Abrindo Bunkr DL...</strong><p>Se não abrir automaticamente, <a href="https://bunkr-download-api.onrender.com/">toque aqui</a>.</p></div>
   </body>
 </html>

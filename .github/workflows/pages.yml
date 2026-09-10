@@ -33,6 +33,7 @@ jobs:
       - name: Build
         env:
           VITE_BASE_PATH: /Bunkr-download/
+          VITE_API_BASE: https://bunkr-download-api.onrender.com
         run: npm run build
 
       - name: Setup Pages

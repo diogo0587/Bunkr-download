@@ -1,7 +1,6 @@
 import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import fetch from 'node-fetch';
-import { Readable } from 'stream';
 
 const USER_AGENT = 'Mozilla/5.0 (Linux; Android 16) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36';
 
@@ -175,19 +174,17 @@ async function startServer() {
       res.setHeader('Cache-Control', 'private, max-age=300');
 
       if (!upstream.body) return res.status(502).send('Resposta sem corpo');
-      Readable.fromWeb(upstream.body as any).pipe(res);
+      (upstream.body as any).pipe(res);
     } catch (error: any) {
       if (!res.headersSent) res.status(502).send(error?.message || 'Erro ao transmitir mídia');
       else res.end();
     }
   });
 
-  // Compatibilidade temporária: a API antiga não é mais usada pela UI nova.
   app.post('/api/bunkr', (_req, res) => {
     res.status(410).json({ error: 'Endpoint legado. Use /api/resolve.' });
   });
 
-  // Compatibilidade com links antigos da aplicação, restrita a hosts Bunkr.
   app.get('/api/download', async (req, res) => {
     try {
       const url = String(req.query.url || '');
@@ -200,7 +197,7 @@ async function startServer() {
       if (len) res.setHeader('Content-Length', len);
       res.setHeader('Content-Disposition', upstream.headers.get('content-disposition') || 'attachment');
       if (!upstream.body) return res.status(502).send('Resposta sem corpo');
-      Readable.fromWeb(upstream.body as any).pipe(res);
+      (upstream.body as any).pipe(res);
     } catch (error: any) {
       res.status(502).send(error?.message || 'Erro interno');
     }

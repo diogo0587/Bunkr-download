@@ -9,6 +9,12 @@ export default defineConfig(({ mode }) => {
   return {
     base: env.VITE_BASE_PATH || '/',
     plugins: [react(), tailwindcss()],
+    publicDir: 'public',
+    build: {
+      rollupOptions: {
+        input: path.resolve(__dirname, 'app.html'),
+      },
+    },
     define: {
       'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),
     },

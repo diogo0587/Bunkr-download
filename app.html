@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="theme-color" content="#0f172a" />
+    <link rel="manifest" href="./manifest.json" />
+    <title>Bunkr Smart Album Downloader</title>
+  </head>
+  <body class="bg-slate-950 text-slate-50 antialiased selection:bg-blue-500/30">
+    <div id="root"></div>
+    <script>
+      // Remove versões antigas da PWA que podiam manter um index.html obsoleto em cache.
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.getRegistrations().then((registrations) => {
+          registrations.forEach((registration) => registration.unregister());
+        }).catch(() => undefined);
+      }
+      if ('caches' in window) {
+        caches.keys().then((keys) => Promise.all(
+          keys.filter((key) => key.startsWith('bunkr-dl-cache-')).map((key) => caches.delete(key)),
+        )).catch(() => undefined);
+      }
+    </script>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
